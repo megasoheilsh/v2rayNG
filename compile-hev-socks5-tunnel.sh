@@ -13,77 +13,91 @@ if [[ ! -d $NDK_HOME ]]; then
 	exit 1
 fi
 
-TMPDIR=$(mktemp -d)
-
-clear_tmp () {
-  rm -rf $TMPDIR
-}
-
-trap 'echo -e "Aborted, error $? in command: $BASH_COMMAND"; trap ERR; clear_tmp; exit 1' ERR INT
-
 # Check if hev-socks5-tunnel directory exists and is properly initialized
-if [ ! -d "$__dir/hev-socks5-tunnel" ] || [ ! -f "$__dir/hev-socks5-tunnel/Android.mk" ]; then
-    echo "hev-socks5-tunnel directory is missing or incomplete. Cloning repository..."
-    
-    # Remove the directory if it exists but is incomplete
-    if [ -d "$__dir/hev-socks5-tunnel" ]; then
-        rm -rf "$__dir/hev-socks5-tunnel"
-    fi
-    
-    # Clone hev-socks5-tunnel repository
-    git clone https://github.com/heiher/hev-socks5-tunnel.git "$__dir/hev-socks5-tunnel"
-    
-    # Enter directory and initialize submodules
-    cd "$__dir/hev-socks5-tunnel"
-    git submodule update --init --recursive
-    cd "$__dir"
+if [ ! -d "$__dir/hev-socks5-tunnel" ]; then
+    echo "hev-socks5-tunnel directory is missing, cloning repository..."
+    git clone --recursive https://github.com/heiher/hev-socks5-tunnel.git
 fi
 
-# Check if build.mk exists, download if needed
-if [ ! -f "$__dir/hev-socks5-tunnel/build.mk" ]; then
-    echo "build.mk not found, downloading from repository..."
-    curl -o "$__dir/hev-socks5-tunnel/build.mk" https://raw.githubusercontent.com/heiher/hev-socks5-tunnel/master/build.mk
-    echo "Downloaded build.mk content:"
-    cat "$__dir/hev-socks5-tunnel/build.mk"
+# Ensure Android.mk exists
+if [ ! -f "$__dir/hev-socks5-tunnel/Android.mk" ]; then
+    echo "Creating Android.mk file..."
+    cat > $__dir/hev-socks5-tunnel/Android.mk << 'EOF'
+LOCAL_PATH := $(call my-dir)
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := hev-socks5-tunnel
+
+LOCAL_CFLAGS += -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers
+LOCAL_CFLAGS += -std=gnu99 -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L
+LOCAL_CFLAGS += -I$(LOCAL_PATH)/src -I$(LOCAL_PATH)/third-part/lwip/include
+LOCAL_CFLAGS += -I$(LOCAL_PATH)/third-part/yaml/yaml/src
+
+LOCAL_SRC_FILES := \
+	$(wildcard $(LOCAL_PATH)/src/*.c) \
+	$(wildcard $(LOCAL_PATH)/src/core/*.c) \
+	$(wildcard $(LOCAL_PATH)/src/tunnel/*.c) \
+	$(wildcard $(LOCAL_PATH)/third-part/lwip/src/core/*.c) \
+	$(wildcard $(LOCAL_PATH)/third-part/lwip/src/core/ipv4/*.c) \
+	$(wildcard $(LOCAL_PATH)/third-part/lwip/src/core/ipv6/*.c) \
+	$(wildcard $(LOCAL_PATH)/third-part/lwip/src/api/*.c) \
+	$(wildcard $(LOCAL_PATH)/third-part/yaml/yaml/src/*.c)
+
+LOCAL_STATIC_LIBRARIES := hev-task-system
+
+include $(BUILD_SHARED_LIBRARY)
+
+$(call import-module, hev-task-system)
+EOF
 fi
 
-# Create temporary directory structure for build
-echo "Copying build files to temporary directory..."
-cp $__dir/hev-socks5-tunnel/Android.mk $TMPDIR/
-cp $__dir/hev-socks5-tunnel/Application.mk $TMPDIR/
-cp $__dir/hev-socks5-tunnel/build.mk $TMPDIR/
+# Ensure Application.mk exists
+if [ ! -f "$__dir/hev-socks5-tunnel/Application.mk" ]; then
+    echo "Creating Application.mk file..."
+    cat > $__dir/hev-socks5-tunnel/Application.mk << 'EOF'
+APP_PLATFORM := android-21
+APP_ABI := armeabi-v7a arm64-v8a x86 x86_64
+APP_CFLAGS := -O3
+APP_MODULES := hev-socks5-tunnel
+EOF
+fi
 
-# Print directory contents for debugging
-echo "hev-socks5-tunnel directory contents:"
-ls -la $__dir/hev-socks5-tunnel/
-echo "TMPDIR contents:"
-ls -la $TMPDIR/
+# Ensure hev-task-system exists
+if [ ! -d "$__dir/hev-socks5-tunnel/third-part/hev-task-system" ]; then
+    echo "Cloning hev-task-system..."
+    mkdir -p $__dir/hev-socks5-tunnel/third-part
+    git clone --recursive https://github.com/heiher/hev-task-system.git $__dir/hev-socks5-tunnel/third-part/hev-task-system
+fi
 
-pushd $TMPDIR
+# Ensure hev-task-system Android.mk exists
+if [ ! -f "$__dir/hev-socks5-tunnel/third-part/hev-task-system/Android.mk" ]; then
+    echo "Creating hev-task-system Android.mk..."
+    cat > $__dir/hev-socks5-tunnel/third-part/hev-task-system/Android.mk << 'EOF'
+LOCAL_PATH := $(call my-dir)
 
-# Create symlinks to the source code
-ln -s $__dir/hev-socks5-tunnel/src src
-ln -s $__dir/hev-socks5-tunnel/include include
-ln -s $__dir/hev-socks5-tunnel/third-part third-part
+include $(CLEAR_VARS)
+LOCAL_MODULE := hev-task-system
 
-# Debug: show the content of Android.mk
-echo "Content of Android.mk:"
-cat Android.mk
+LOCAL_CFLAGS += -Wall -Wextra -Wno-unused-parameter
+LOCAL_CFLAGS += -std=gnu99 -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L
+LOCAL_CFLAGS += -I$(LOCAL_PATH)/src
 
-# Build using NDK
-echo "Starting NDK build..."
-$NDK_HOME/ndk-build \
-	NDK_PROJECT_PATH=. \
-	APP_BUILD_SCRIPT=./Android.mk \
-	APP_ABI=all \
-	APP_PLATFORM=android-21 \
-	NDK_LIBS_OUT=$TMPDIR/libs \
-	NDK_OUT=$TMPDIR/tmp \
-	APP_SHORT_COMMANDS=false LOCAL_SHORT_COMMANDS=false -B -j4
+LOCAL_SRC_FILES := \
+	$(wildcard $(LOCAL_PATH)/src/*.c)
 
-# Copy the compiled libraries back to the project
-echo "Copying compiled libraries to project..."
-cp -r $TMPDIR/libs $__dir/
+include $(BUILD_STATIC_LIBRARY)
+EOF
+fi
 
-popd
-rm -rf $TMPDIR 
+# Set up jni directory
+mkdir -p $__dir/V2rayNG/app/src/main/jni
+ln -sf "$__dir/hev-socks5-tunnel" "$__dir/V2rayNG/app/src/main/jni/hev-socks5-tunnel"
+
+# Build the library
+echo "Building hev-socks5-tunnel with NDK..."
+cd $__dir/V2rayNG/app/src/main
+export NDK_PROJECT_PATH=.
+$NDK_HOME/ndk-build -C jni APP_BUILD_SCRIPT=jni/hev-socks5-tunnel/Android.mk APP_ABI=all APP_PLATFORM=android-21 NDK_LIBS_OUT=../libs NDK_OUT=../obj APP_SHORT_COMMANDS=false LOCAL_SHORT_COMMANDS=false -B
+cd $__dir
+
+echo "Build completed successfully!" 
