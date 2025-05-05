@@ -92,7 +92,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
     }
 
     override fun onRevoke() {
-        stopV2Ray()
+        stopV2Ray(true)
     }
 
 //    override fun onLowMemory() {
@@ -161,10 +161,13 @@ class V2RayVpnService : VpnService(), ServiceControl {
         try {
             val safe = true
             val ips = HashSet<String>()
-            confs.forEach {
-                val conf = it.second
-                conf.getProxyOutboundBean()?.let { outbound ->
-                    ips.add(outbound.getServerAddress())
+            confs.forEach { conf ->
+                val serverConfig = conf.second
+                serverConfig.getProxyOutboundBean()?.let { outbound ->
+                    val serverAddress = outbound.getServerAddress()
+                    if (!serverAddress.isNullOrEmpty()) {
+                        ips.add(serverAddress)
+                    }
                 }
             }
 
@@ -186,7 +189,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
             startVpn(packageName, ips)
             
             // Initialize tun2socks
-            if (mInterface != null) {
+            if (::mInterface.isInitialized) {
                 isRunning = true
                 restartCounter = 0  // Reset restart counter
                 runTun2socks()
@@ -197,8 +200,23 @@ class V2RayVpnService : VpnService(), ServiceControl {
 
         } catch (e: Exception) {
             Log.e(AppConfig.TAG, "Failed to setup VPN", e)
-            stopV2Ray()
+            stopV2Ray(true)
             shutdown()
+        }
+    }
+
+    /**
+     * Starts the VPN service.
+     * @param packageName The package name of the application.
+     * @param ips The list of IPs to bypass.
+     */
+    private fun startVpn(packageName: String, ips: Set<String>) {
+        Log.i(AppConfig.TAG, "Starting VPN service for $packageName")
+        
+        // Setup the VPN interface
+        if (!setupVpnService()) {
+            Log.e(AppConfig.TAG, "Failed to set up VPN interface")
+            throw Exception("Failed to set up VPN interface")
         }
     }
 
@@ -297,7 +315,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
         } catch (e: Exception) {
             // non-nullable lateinit var
             Log.e(AppConfig.TAG, "Failed to establish VPN interface", e)
-            stopV2Ray()
+            stopV2Ray(true)
         }
         return false
     }
@@ -450,15 +468,14 @@ class V2RayVpnService : VpnService(), ServiceControl {
      * Stops the V2Ray service.
      * @param isForced Whether to force stop the service.
      */
-    override fun stopV2Ray() {
+    override fun stopV2Ray(isForced: Boolean) {
         isRunning = false
         
         // Stop the tun2socks process first
         stopTun2socks()
         
         // Then continue with other cleanup
-        sendFd()
-        if (mInterface != null) {
+        if (::mInterface.isInitialized) {
             try {
                 mInterface.close()
             } catch (ignored: Exception) {
@@ -499,5 +516,14 @@ class V2RayVpnService : VpnService(), ServiceControl {
         } catch (e: Exception) {
             Log.e(AppConfig.TAG, "Failed to stop $TUN2SOCKS process", e)
         }
+    }
+
+    /**
+     * Shuts down the VPN service.
+     */
+    private fun shutdown() {
+        Log.i(AppConfig.TAG, "Shutting down VPN service")
+        stopV2Ray(true)
+        stopSelf()
     }
 }
