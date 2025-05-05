@@ -37,7 +37,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
         private const val PRIVATE_VLAN4_ROUTER = "10.10.14.2"
         private const val PRIVATE_VLAN6_CLIENT = "fc00::10:10:14:1"
         private const val PRIVATE_VLAN6_ROUTER = "fc00::10:10:14:2"
-        private const val TUN2SOCKS = "libtun2socks.so"
+        private const val TUN2SOCKS = "libhev-socks5-tunnel.so"
 
     }
 
@@ -254,32 +254,48 @@ class V2RayVpnService : VpnService(), ServiceControl {
 
     /**
      * Runs the tun2socks process.
-     * Starts the tun2socks process with the appropriate parameters.
+     * Starts the hev-socks5-tunnel process with the appropriate parameters.
      */
     private fun runTun2socks() {
         Log.i(AppConfig.TAG, "Start run $TUN2SOCKS")
         val socksPort = SettingsManager.getSocksPort()
-        val cmd = arrayListOf(
-            File(applicationContext.applicationInfo.nativeLibraryDir, TUN2SOCKS).absolutePath,
-            "--netif-ipaddr", PRIVATE_VLAN4_ROUTER,
-            "--netif-netmask", "255.255.255.252",
-            "--socks-server-addr", "$LOOPBACK:${socksPort}",
-            "--tunmtu", VPN_MTU.toString(),
-            "--sock-path", "sock_path",//File(applicationContext.filesDir, "sock_path").absolutePath,
-            "--enable-udprelay",
-            "--loglevel", "notice"
-        )
-
+        
+        // Create a YAML config string for hev-socks5-tunnel
+        val configDir = applicationContext.filesDir
+        val configFile = File(configDir, "hev-socks5-tunnel.yml")
+        
+        val configBuilder = StringBuilder()
+        configBuilder.append("tunnel:\n")
+        configBuilder.append("  name: tun0\n")
+        configBuilder.append("  mtu: $VPN_MTU\n")
+        configBuilder.append("  ipv4: $PRIVATE_VLAN4_ROUTER\n")
+        
         if (MmkvManager.decodeSettingsBool(AppConfig.PREF_PREFER_IPV6)) {
-            cmd.add("--netif-ip6addr")
-            cmd.add(PRIVATE_VLAN6_ROUTER)
+            configBuilder.append("  ipv6: '$PRIVATE_VLAN6_ROUTER'\n")
         }
+        
+        configBuilder.append("\nsocks5:\n")
+        configBuilder.append("  port: $socksPort\n")
+        configBuilder.append("  address: $LOOPBACK\n")
+        configBuilder.append("  udp: 'udp'\n")
+        
         if (MmkvManager.decodeSettingsBool(AppConfig.PREF_LOCAL_DNS_ENABLED)) {
             val localDnsPort = Utils.parseInt(MmkvManager.decodeSettingsString(AppConfig.PREF_LOCAL_DNS_PORT), AppConfig.PORT_LOCAL_DNS.toInt())
-            cmd.add("--dnsgw")
-            cmd.add("$LOOPBACK:${localDnsPort}")
+            configBuilder.append("\nmisc:\n")
+            configBuilder.append("  log-level: 'info'\n")
         }
-        Log.i(AppConfig.TAG, cmd.toString())
+        
+        configFile.writeText(configBuilder.toString())
+        
+        // Command to run hev-socks5-tunnel
+        val cmd = arrayListOf(
+            File(applicationContext.applicationInfo.nativeLibraryDir, TUN2SOCKS).absolutePath,
+            configFile.absolutePath,
+            "-1" // Pass -1 as the tun_fd to let the tunnel create its own interface
+        )
+        
+        Log.i(AppConfig.TAG, "Config: ${configBuilder.toString()}")
+        Log.i(AppConfig.TAG, "Command: ${cmd.toString()}")
 
         try {
             val proBuilder = ProcessBuilder(cmd)
@@ -287,6 +303,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
             process = proBuilder
                 .directory(applicationContext.filesDir)
                 .start()
+            
             Thread {
                 Log.i(AppConfig.TAG, "$TUN2SOCKS check")
                 process.waitFor()
@@ -296,40 +313,26 @@ class V2RayVpnService : VpnService(), ServiceControl {
                     runTun2socks()
                 }
             }.start()
-            Log.i(AppConfig.TAG, "$TUN2SOCKS process info : ${process.toString()}")
-
-            sendFd()
+            
+            Log.i(AppConfig.TAG, "$TUN2SOCKS process info: ${process.toString()}")
+            
+            // Pass the file descriptor to the tunnel directly at startup instead of through sendFd()
+            val fd = mInterface.fileDescriptor
+            process.outputStream.write(fd.toString().toByteArray())
+            process.outputStream.flush()
+            
         } catch (e: Exception) {
             Log.e(AppConfig.TAG, "Failed to start $TUN2SOCKS process", e)
         }
     }
 
     /**
-     * Sends the file descriptor to the tun2socks process.
-     * Attempts to send the file descriptor multiple times if necessary.
+     * This method is no longer needed with hev-socks5-tunnel as we pass the file descriptor directly
+     * It's kept as a no-op for compatibility
      */
     private fun sendFd() {
-        val fd = mInterface.fileDescriptor
-        val path = File(applicationContext.filesDir, "sock_path").absolutePath
-        Log.i(AppConfig.TAG, "LocalSocket path : $path")
-
-        CoroutineScope(Dispatchers.IO).launch {
-            var tries = 0
-            while (true) try {
-                Thread.sleep(50L shl tries)
-                Log.i(AppConfig.TAG, "LocalSocket sendFd tries: $tries")
-                LocalSocket().use { localSocket ->
-                    localSocket.connect(LocalSocketAddress(path, LocalSocketAddress.Namespace.FILESYSTEM))
-                    localSocket.setFileDescriptorsForSend(arrayOf(fd))
-                    localSocket.outputStream.write(42)
-                }
-                break
-            } catch (e: Exception) {
-                Log.e(AppConfig.TAG, "Failed to send file descriptor, try: $tries", e)
-                if (tries > 5) break
-                tries += 1
-            }
-        }
+        // Not needed for hev-socks5-tunnel
+        Log.i(AppConfig.TAG, "sendFd() is not needed for hev-socks5-tunnel")
     }
 
     /**
