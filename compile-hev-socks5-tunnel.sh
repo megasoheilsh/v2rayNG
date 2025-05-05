@@ -21,7 +21,25 @@ clear_tmp () {
 
 trap 'echo -e "Aborted, error $? in command: $BASH_COMMAND"; trap ERR; clear_tmp; exit 1' ERR INT
 
-# Copy the Android.mk and Application.mk files to the temporary directory
+# Check if hev-socks5-tunnel directory exists and is properly initialized
+if [ ! -d "$__dir/hev-socks5-tunnel" ] || [ ! -f "$__dir/hev-socks5-tunnel/Android.mk" ]; then
+    echo "hev-socks5-tunnel directory is missing or incomplete. Cloning repository..."
+    
+    # Remove the directory if it exists but is incomplete
+    if [ -d "$__dir/hev-socks5-tunnel" ]; then
+        rm -rf "$__dir/hev-socks5-tunnel"
+    fi
+    
+    # Clone hev-socks5-tunnel repository
+    git clone https://github.com/heiher/hev-socks5-tunnel.git "$__dir/hev-socks5-tunnel"
+    
+    # Enter directory and initialize submodules
+    cd "$__dir/hev-socks5-tunnel"
+    git submodule update --init --recursive
+    cd "$__dir"
+fi
+
+# Create temporary directory structure for build
 install -m644 $__dir/hev-socks5-tunnel/Android.mk $TMPDIR/
 install -m644 $__dir/hev-socks5-tunnel/Application.mk $TMPDIR/
 

@@ -21,6 +21,16 @@ jobs:
         submodules: 'recursive'
         fetch-depth: '0'
 
+    - name: Ensure hev-socks5-tunnel
+      run: |
+        if [ ! -d "hev-socks5-tunnel" ] || [ ! -f "hev-socks5-tunnel/Android.mk" ]; then
+          echo "hev-socks5-tunnel not found, initializing..."
+          if [ -d "hev-socks5-tunnel" ]; then
+            rm -rf hev-socks5-tunnel
+          fi
+          git clone --recursive https://github.com/heiher/hev-socks5-tunnel.git
+        fi
+
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3.2.0
       with:
