@@ -266,11 +266,14 @@ class V2RayVpnService : VpnService(), ServiceControl {
         
         val configBuilder = StringBuilder()
         configBuilder.append("tunnel:\n")
-        configBuilder.append("  name: tun0\n")
+        // Don't set the name as Android manages the tun interface
+        // configBuilder.append("  name: tun0\n")
         configBuilder.append("  mtu: $VPN_MTU\n")
+        // Format properly - IPv4 doesn't need quotes
         configBuilder.append("  ipv4: $PRIVATE_VLAN4_ROUTER\n")
         
         if (MmkvManager.decodeSettingsBool(AppConfig.PREF_PREFER_IPV6)) {
+            // IPv6 needs quotes
             configBuilder.append("  ipv6: '$PRIVATE_VLAN6_ROUTER'\n")
         }
         
@@ -279,23 +282,33 @@ class V2RayVpnService : VpnService(), ServiceControl {
         configBuilder.append("  address: $LOOPBACK\n")
         configBuilder.append("  udp: 'udp'\n")
         
+        // Add misc section with appropriate settings
+        configBuilder.append("\nmisc:\n")
+        configBuilder.append("  log-level: 'info'\n")
+        configBuilder.append("  tcp-buffer-size: 32768\n")
+        configBuilder.append("  task-stack-size: 40960\n")
+        
         if (MmkvManager.decodeSettingsBool(AppConfig.PREF_LOCAL_DNS_ENABLED)) {
             val localDnsPort = Utils.parseInt(MmkvManager.decodeSettingsString(AppConfig.PREF_LOCAL_DNS_PORT), AppConfig.PORT_LOCAL_DNS.toInt())
-            configBuilder.append("\nmisc:\n")
-            configBuilder.append("  log-level: 'info'\n")
+            // Add DNS configuration if needed
         }
         
+        Log.i(AppConfig.TAG, "Writing config to: ${configFile.absolutePath}")
         configFile.writeText(configBuilder.toString())
+        Log.i(AppConfig.TAG, "Config: ${configBuilder.toString()}")
         
+        // Get the file descriptor for the tun interface
+        val tunFd = mInterface.fileDescriptor.toString()
+        Log.i(AppConfig.TAG, "Using tun interface with fd: $tunFd")
+
         // Command to run hev-socks5-tunnel
         val cmd = arrayListOf(
             File(applicationContext.applicationInfo.nativeLibraryDir, TUN2SOCKS).absolutePath,
             configFile.absolutePath,
-            "-1" // Pass -1 as the tun_fd to let the tunnel create its own interface
+            tunFd  // Pass the tun fd directly as a parameter (not "-1")
         )
         
-        Log.i(AppConfig.TAG, "Config: ${configBuilder.toString()}")
-        Log.i(AppConfig.TAG, "Command: ${cmd.toString()}")
+        Log.i(AppConfig.TAG, "Command: ${cmd.joinToString(" ")}")
 
         try {
             val proBuilder = ProcessBuilder(cmd)
@@ -304,10 +317,20 @@ class V2RayVpnService : VpnService(), ServiceControl {
                 .directory(applicationContext.filesDir)
                 .start()
             
+            // Debug: read process output to see what's happening
+            Thread {
+                process.inputStream.bufferedReader().use { reader ->
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        Log.i(AppConfig.TAG, "$TUN2SOCKS output: $line")
+                    }
+                }
+            }.start()
+            
             Thread {
                 Log.i(AppConfig.TAG, "$TUN2SOCKS check")
-                process.waitFor()
-                Log.i(AppConfig.TAG, "$TUN2SOCKS exited")
+                val exitCode = process.waitFor()
+                Log.i(AppConfig.TAG, "$TUN2SOCKS exited with code: $exitCode")
                 if (isRunning) {
                     Log.i(AppConfig.TAG, "$TUN2SOCKS restart")
                     runTun2socks()
@@ -316,10 +339,7 @@ class V2RayVpnService : VpnService(), ServiceControl {
             
             Log.i(AppConfig.TAG, "$TUN2SOCKS process info: ${process.toString()}")
             
-            // Pass the file descriptor to the tunnel directly at startup instead of through sendFd()
-            val fd = mInterface.fileDescriptor
-            process.outputStream.write(fd.toString().toByteArray())
-            process.outputStream.flush()
+            // No need to write to the process anymore - the fd is passed as parameter
             
         } catch (e: Exception) {
             Log.e(AppConfig.TAG, "Failed to start $TUN2SOCKS process", e)
