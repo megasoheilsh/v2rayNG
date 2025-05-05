@@ -39,9 +39,25 @@ if [ ! -d "$__dir/hev-socks5-tunnel" ] || [ ! -f "$__dir/hev-socks5-tunnel/Andro
     cd "$__dir"
 fi
 
+# Check if build.mk exists, download if needed
+if [ ! -f "$__dir/hev-socks5-tunnel/build.mk" ]; then
+    echo "build.mk not found, downloading from repository..."
+    curl -o "$__dir/hev-socks5-tunnel/build.mk" https://raw.githubusercontent.com/heiher/hev-socks5-tunnel/master/build.mk
+    echo "Downloaded build.mk content:"
+    cat "$__dir/hev-socks5-tunnel/build.mk"
+fi
+
 # Create temporary directory structure for build
-install -m644 $__dir/hev-socks5-tunnel/Android.mk $TMPDIR/
-install -m644 $__dir/hev-socks5-tunnel/Application.mk $TMPDIR/
+echo "Copying build files to temporary directory..."
+cp $__dir/hev-socks5-tunnel/Android.mk $TMPDIR/
+cp $__dir/hev-socks5-tunnel/Application.mk $TMPDIR/
+cp $__dir/hev-socks5-tunnel/build.mk $TMPDIR/
+
+# Print directory contents for debugging
+echo "hev-socks5-tunnel directory contents:"
+ls -la $__dir/hev-socks5-tunnel/
+echo "TMPDIR contents:"
+ls -la $TMPDIR/
 
 pushd $TMPDIR
 
@@ -50,7 +66,12 @@ ln -s $__dir/hev-socks5-tunnel/src src
 ln -s $__dir/hev-socks5-tunnel/include include
 ln -s $__dir/hev-socks5-tunnel/third-part third-part
 
+# Debug: show the content of Android.mk
+echo "Content of Android.mk:"
+cat Android.mk
+
 # Build using NDK
+echo "Starting NDK build..."
 $NDK_HOME/ndk-build \
 	NDK_PROJECT_PATH=. \
 	APP_BUILD_SCRIPT=./Android.mk \
@@ -61,6 +82,7 @@ $NDK_HOME/ndk-build \
 	APP_SHORT_COMMANDS=false LOCAL_SHORT_COMMANDS=false -B -j4
 
 # Copy the compiled libraries back to the project
+echo "Copying compiled libraries to project..."
 cp -r $TMPDIR/libs $__dir/
 
 popd

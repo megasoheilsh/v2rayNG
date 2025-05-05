@@ -30,6 +30,20 @@ jobs:
           fi
           git clone --recursive https://github.com/heiher/hev-socks5-tunnel.git
         fi
+        
+        # Verify submodules are properly initialized
+        echo "Checking hev-socks5-tunnel directory..."
+        ls -la hev-socks5-tunnel/
+        
+        echo "Checking build files..."
+        ls -la hev-socks5-tunnel/build.mk || echo "build.mk not found"
+        
+        # Make sure the file exists
+        if [ ! -f "hev-socks5-tunnel/build.mk" ]; then
+          echo "build.mk missing, creating from source repository"
+          curl -o hev-socks5-tunnel/build.mk https://raw.githubusercontent.com/heiher/hev-socks5-tunnel/master/build.mk
+          cat hev-socks5-tunnel/build.mk
+        fi
 
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3.2.0
@@ -58,6 +72,23 @@ jobs:
     - name: Build libhev-socks5-tunnel
       if: steps.cache-libhev-socks5-tunnel-restore.outputs.cache-hit != 'true'
       run: |
+        echo "Verifying and preparing for build..."
+        ls -la hev-socks5-tunnel/
+        
+        # Make sure all required files exist
+        if [ ! -f "hev-socks5-tunnel/build.mk" ]; then
+          echo "build.mk is missing, downloading from original repo"
+          curl -o hev-socks5-tunnel/build.mk https://raw.githubusercontent.com/heiher/hev-socks5-tunnel/master/build.mk
+        fi
+        
+        # Try direct copy approach for critical files
+        echo "Preparing source and build files..."
+        mkdir -p build-tmp
+        cp -r hev-socks5-tunnel/* build-tmp/
+        cp hev-socks5-tunnel/.git* build-tmp/ || true
+        
+        # Make script executable
+        chmod +x compile-hev-socks5-tunnel.sh
         bash compile-hev-socks5-tunnel.sh
 
     - name: Save libhev-socks5-tunnel
